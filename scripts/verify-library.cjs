@@ -1,0 +1,66 @@
+const{_electron}=require('playwright-core');const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const root=path.resolve('.test-runtime',`library-ui-${Date.now()}`),workspace=path.join(root,'workspace');fs.mkdirSync(workspace,{recursive:true});
+ const source=path.resolve('.test-runtime/flow-live/scene-001.mp4');if(!fs.existsSync(source))throw Error('Real MP4 fixture not found');
+ const scene=id=>({id,duration_seconds:8,description_vi:id===1?'Chú mèo bên cửa sổ':'Chú mèo đón nắng',voiceover_vi:'Lời dẫn mẫu',video_prompt_en:'A ginger cat in morning sunlight.',negative_prompt_en:'No text'});
+ const storyboard={title:'Mèo buổi sáng',summary:'Hai cảnh về chú mèo',scenes:[scene(1),scene(2)],updatedAt:'2026-10-28T01:00:00Z'};
+ function batch(id,projectId,jobs,created){
+  const directory=path.join(workspace,'batches',id);fs.mkdirSync(directory,{recursive:true});
+  const value={id,projectId,title:projectId==='project-cat'?'Mèo buổi sáng':'Chuyến đi Đà Lạt',createdAt:created,projectUrl:'https://flow.google.com/project/'+projectId,status:'completed',spent:jobs.length*6,options:{resolution:'360p',ratio:'16:9',budget:60},storyboardSnapshot:projectId==='project-cat'?storyboard:{title:'Chuyến đi Đà Lạt',scenes:[scene(1)]},jobs:jobs.map(([jobId,sceneId,missing])=>{const file=path.join(directory,jobId+'.mp4');if(!missing)fs.copyFileSync(source,file);return{id:jobId,sceneId,scene:scene(sceneId),status:'downloaded',file,metadata:{duration:8,width:640,height:360},configuration:{model:'Omni 1.1 Flash',resolution:'360p',duration:8,ratio:'16:9'},downloadedAt:created,prompt:'Ginger tabby in the morning sun.'};})};
+  fs.writeFileSync(path.join(directory,'manifest.json'),JSON.stringify(value));return value;
+ }
+ batch('batch-old','project-cat',[['job-old',1,false]],'2026-10-28T01:00:00Z');
+ const current=batch('batch-new','project-cat',[['job-new',1,false],['job-missing',2,true]],'2026-10-28T02:00:00Z');
+ batch('batch-travel','project-travel',[['job-travel',1,false]],'2026-10-28T03:00:00Z');
+ const project={title:'Mèo buổi sáng',brief:'Chú mèo trong buổi sáng',style:'Điện ảnh',ratio:'16:9',scenes:2,credits:425,cost:6};
+ fs.writeFileSync(path.join(workspace,'workspace.json'),JSON.stringify({activeProjectId:'project-cat',project,storyboard,flowBatch:current}));
+ const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+ const app=await _electron.launch({args:['.','--dev',`--user-data-dir=${root}`],env});
+ try{
+  const page=await app.firstWindow(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.waitForSelector('#library-nav');await page.click('#library-nav');await page.waitForSelector('[data-project-id="project-cat"]');
+  assert.equal(await page.locator('.project-card').count(),2);
+  await page.click('[data-project-id="project-cat"]');assert.equal(await page.locator('.library-scene').count(),2);
+  await page.fill('#library-scene-search','canh 2');assert.equal(await page.locator('.library-scene').count(),1);await page.fill('#library-scene-search','');
+  await page.selectOption('#library-scene-filter','missing');assert.equal(await page.locator('.library-scene').count(),1);await page.selectOption('#library-scene-filter','all');
+  const card=page.locator('.library-scene[data-scene-id="1"]');assert.equal(await card.locator('option').count(),2);
+  await card.locator('select').selectOption('batch-old:job-old');await card.getByRole('button',{name:'▶ Xem trước',exact:true}).click();
+  await page.waitForFunction(()=>document.getElementById('preview-video').readyState>=2,null,{timeout:20000});
+  assert.equal(await page.locator('#preview-video').evaluate(v=>v.videoWidth),640);
+  await page.locator('#preview-video').evaluate(v=>{v.currentTime=3;});await page.waitForFunction(()=>Math.abs(document.getElementById('preview-video').currentTime-3)<1);
+  const media=await page.locator('#preview-video').getAttribute('src');
+  const range=await app.evaluate(async({net},url)=>{const r=await net.fetch(url,{headers:{Range:'bytes=0-31'}});return{status:r.status,size:(await r.arrayBuffer()).byteLength};},media);
+  assert.deepEqual(range,{status:206,size:32});await page.click('#preview-close');
+  await card.getByRole('button',{name:'Dùng bản này',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.library-scene[data-scene-id="1"] select').value==='batch-old:job-old');
+  await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},source);
+  await card.getByRole('button',{name:'Nhập phiên bản từ máy',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.library-scene[data-scene-id="1"] option').length===3);
+  await page.locator('.library-editor summary').click();await page.fill('#library-project-name','Mèo vàng · buổi sáng');await page.fill('#library-project-notes','Chọn bản đầu cho cảnh 1; cảnh 2 cần tải lại.');
+  await page.getByRole('button',{name:'Lưu thông tin',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.library-project-heading h2').textContent==='Mèo vàng · buổi sáng');
+  await page.locator('#library-detail').screenshot({path:path.join(root,'library-detail.png')});
+  const exportRoot=path.join(root,'exports');fs.mkdirSync(exportRoot);
+  await app.evaluate(({dialog},folder)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[folder]});},exportRoot);
+  await page.getByRole('button',{name:'Xuất các cảnh đã có',exact:true}).click();await page.waitForFunction(()=>document.getElementById('toast').textContent.includes('Đã xuất 1 cảnh'));
+  const exported=fs.readdirSync(exportRoot)[0],manifest=JSON.parse(fs.readFileSync(path.join(exportRoot,exported,'project.json'),'utf8'));
+  assert.equal(manifest.scenes[0].versionId,'batch-old:job-old');assert.deepEqual(manifest.missingScenes,[2]);
+  await page.getByRole('button',{name:'Lưu trữ dự án',exact:true}).click();await page.waitForSelector('button:has-text("Khôi phục dự án")');
+  await page.getByRole('button',{name:'← Tất cả dự án',exact:true}).click();assert.equal(await page.locator('.project-card').count(),1);
+  await page.selectOption('#library-filter','archived');assert.equal(await page.locator('.project-card').count(),1);await page.click('[data-project-id="project-cat"]');
+  await page.getByRole('button',{name:'Khôi phục dự án',exact:true}).click();await page.waitForSelector('button:has-text("Lưu trữ dự án")');
+  await page.getByRole('button',{name:'Mở để tiếp tục làm việc',exact:true}).click();await page.waitForFunction(()=>document.body.dataset.view==='script');assert.equal(await page.inputValue('#title'),'Mèo vàng · buổi sáng');
+  await page.click('#editor-tab-voice');await page.locator('.scene-card').first().locator('[data-field="voiceover_vi"]').fill('Bản nháp lời dẫn cần được giữ khi chuyển dự án.');
+  await page.click('#header-new');await page.waitForFunction(()=>document.getElementById('title').value==='');assert.equal(await page.locator('.scene-card').count(),0);
+  await page.click('#script-nav');await page.fill('#title','Dự án độc lập');await page.fill('#brief','Ý tưởng mới không trộn bản nháp cũ.');await page.click('button[type="submit"]');await page.waitForFunction(()=>document.getElementById('toast').textContent.includes('Đã lưu dự án'));
+  await page.click('#library-nav');await page.selectOption('#library-filter','active');await page.waitForFunction(()=>document.querySelectorAll('.project-card').length===3);
+  await page.fill('#library-search','meo vang');await page.waitForFunction(()=>document.querySelectorAll('.project-card').length===1);await page.fill('#library-search','');
+  await page.locator('#library-section').screenshot({path:path.join(root,'library-overview.png')});
+  await page.locator('.project-tile').filter({has:page.locator('[data-project-id="project-cat"]')}).locator('.project-star').click();
+  await page.selectOption('#library-filter','favorite');await page.waitForFunction(()=>document.querySelectorAll('.project-card').length===1);
+  await page.click('[data-project-id="project-cat"]');await page.getByRole('button',{name:'Mở để tiếp tục làm việc',exact:true}).click();await page.waitForFunction(()=>document.body.dataset.view==='script');
+  assert.equal(await page.locator('.scene-card').first().locator('[data-field="voiceover_vi"]').inputValue(),'Bản nháp lời dẫn cần được giữ khi chuyển dự án.');
+  assert.deepEqual(errors,[]);
+  const catalog=JSON.parse(fs.readFileSync(path.join(workspace,'library.json'),'utf8'));assert.equal(catalog.preferred['project-cat:1'],'batch-old:job-old');
+  console.log('PASS: project/scene/version grouping, real MP4 playback+seek+Range, local import, preferred take, notes/rename, archive/restore, export, separate project+scene drafts, favorites and search. Evidence:',root);
+ }finally{await app.close();}
+ process.exit(0);
+})().catch(error=>{console.error(error);process.exit(1);});

@@ -1,0 +1,3 @@
+﻿const{test}=require('node:test'),assert=require('node:assert/strict');const{newFailure,GENERATION_TIMEOUT_MS,MAX_GENERATION_RETRIES}=require('../src/flow.cjs');
+test('Flow creation timeout is five minutes and retries are limited to two',()=>{assert.equal(GENERATION_TIMEOUT_MS,300000);assert.equal(MAX_GENERATION_RETRIES,2);});
+test('only a unique new failure can trigger retry',()=>{const old={key:'old',failed:true,failureText:'Failed'},fresh={key:'new',failed:true,failureText:'Failed'};assert.equal(newFailure([old],{baseline:[old]}),null);assert.equal(newFailure([fresh],{baseline:[old]}),null);assert.equal(newFailure([old,fresh],{baseline:[old]}),fresh);assert.throws(()=>newFailure([old,fresh],{baseline:[]}));});

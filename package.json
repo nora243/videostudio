@@ -1,0 +1,32 @@
+{
+  "name": "video-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows workspace for Gemini and Google Flow",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test tests/*.test.cjs",
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/renderer.js && node --check src/studio.js && node --check src/library.cjs && node --check src/library.js && node --check src/flow-projects.cjs && node --check src/production.cjs && node --check src/production-ui.js && node --check src/script-presets.js && node --check src/activity-log.cjs && node --check src/logs-ui.js && node --check src/script-edit.cjs && node --check src/media-quality.cjs && node --check src/upscale-runner.cjs && node --check src/upscale-ui.js && node --check src/flow.cjs && node --check src/postproduction.cjs && node --check src/postproduction-ui.js && node --check src/postproduction-preview.js && node --check src/browser-profiles.cjs && node --check src/profiles-ui.js && node --check src/references.cjs && node --check src/references-ui.js && node --check src/production-pipeline.cjs && node --check src/pipeline-steps.cjs && node --check src/pipeline-ui.js",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^45.1.0",
+    "electron-builder": "^26.0.12"
+  },
+  "dependencies": {
+    "playwright-core": "^1.56.0"
+  },
+  "build": {
+    "appId": "local.videostudio.desktop",
+    "productName": "Video Studio",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}

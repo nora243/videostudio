@@ -1,0 +1,12 @@
+﻿const {randomUUID}=require('node:crypto');
+const STAGES=['script','videos','upscale','cleanup','merge'];
+class ProductionPipeline{
+ constructor({state,persist,steps,log=()=>{}}){Object.assign(this,{state,persist,steps,log});this.busy=false;const job=state.productionPipeline;if(job?.status==='running'){job.status='paused';job.error='Ứng dụng đã dừng. Bấm Tiếp tục từ bước đang dở.';this.persist();}}
+ save(){this.state.productionPipeline.updatedAt=new Date().toISOString();this.persist();}
+ start(input){if(this.busy)throw Error('Quy trình sản xuất đang chạy.');if(this.state.productionPipeline&&!['completed','cancelled'].includes(this.state.productionPipeline.status))throw Error('Có quy trình đang dở. Hãy bấm Tiếp tục hoặc kết thúc quy trình cũ.');this.state.productionPipeline={id:randomUUID(),projectId:this.state.activeProjectId,status:'paused',stage:'script',input:structuredClone(input),done:[],createdAt:new Date().toISOString()};this.save();return this.resume();}
+ resume(){if(this.busy)throw Error('Quy trình sản xuất đang chạy.');const job=this.state.productionPipeline;if(!job||job.projectId!==this.state.activeProjectId)throw Error('Không có quy trình của dự án này để tiếp tục.');if(job.status==='completed')return job;if(job.status==='cancelled')throw Error('Quy trình đã kết thúc. Hãy bắt đầu quy trình mới.');job.status='running';job.pauseRequested=false;delete job.error;this.busy=true;this.save();this.completion=this.run(job);return job;}
+ pause(){const job=this.state.productionPipeline;if(job){job.pauseRequested=true;this.save();}}
+ cancel(){if(this.busy)throw Error('Tạm dừng và chờ bước hiện tại dừng trước khi kết thúc.');if(this.state.productionPipeline){this.state.productionPipeline.status='cancelled';this.save();}}
+ async run(job){try{for(const stage of STAGES){if(job.done.includes(stage))continue;job.stage=stage;this.save();if(job.pauseRequested)break;this.log('info','Bắt đầu bước '+stage,{stage:'pipeline.'+stage,projectId:job.projectId});const result=await this.steps[stage](job,()=>this.save());job.results||={};job.results[stage]=result??null;job.done.push(stage);this.save();if(job.pauseRequested)break;}job.status=job.done.length===STAGES.length?'completed':'paused';if(job.status==='completed')job.completedAt=new Date().toISOString();}catch(error){job.status='paused';job.error=error.message;this.log('error',error.message,{stage:'pipeline.'+job.stage,projectId:job.projectId,stack:error.stack});}finally{this.busy=false;this.save();}return job;}
+}
+module.exports={ProductionPipeline,STAGES};
