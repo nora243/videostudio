@@ -14,3 +14,8 @@ test('rejects a mislabeled 720p download, duration mismatch and wrong orientatio
 });
 
 test('1080p downloads reconnect through each job owning browser profile',async t=>{const f=fixture(t),opened=[];f.state.flowBatch.profileId='account-b';f.state.flowBatch.jobs[0].profileId='account-b';f.runner.getPage=async(url,profileId)=>{opened.push({url,profileId});return{};};f.runner.start({projectId:'project-a',sceneId:2});await f.runner.run();assert.equal(opened[0].profileId,'account-b');assert.equal(f.runner.queue.items[0].status,'downloaded');});
+test('pause interrupts current wait and leaves later scenes unsent',async t=>{
+ const f=fixture(t);f.runner.getAdapter=()=>({download1080:async(_p,job,_file,save,_report,timeout,{shouldStop})=>{
+ assert.equal(timeout,120000);job.upscale={status:'waiting',requestedAt:'now'};await save();f.runner.pause();assert.equal(shouldStop(),true);throw Error('Paused');
+ }});f.runner.start({projectId:'project-a'});await f.runner.run();assert.equal(f.runner.busy,false);assert.equal(f.runner.queue.status,'paused');assert.equal(f.runner.queue.items[0].status,'interrupted');assert.equal(f.runner.queue.items[1].status,'queued');
+});

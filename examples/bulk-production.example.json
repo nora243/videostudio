@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "outputDirectory": "./bulk-output",
+  "projects": [
+    {
+      "id": "review-bom-xang",
+      "title": "Đợi đèn xăng sáng mới đổ?",
+      "brief": "Giải thích dễ hiểu về bơm xăng, thói quen sử dụng và cách chăm sóc xe; ví dụ thực tế trong gara.",
+      "templateId": "gara-review",
+      "style": "Dân dã, đời thường — tự quay bằng điện thoại",
+      "ratio": "9:16",
+      "scenes": "auto",
+      "sceneDuration": "auto",
+      "resolution": "720p",
+      "referenceImages": [
+        {
+          "path": "./images/em-gai-gara.png",
+          "role": "female_lead",
+          "description": "Ảnh toàn thân quy định trang phục; chân dung quy định khuôn mặt và kiểu tóc."
+        }
+      ]
+    },
+    {
+      "id": "nha-meo-tivi",
+      "title": "Tranh nhau xem tivi",
+      "brief": "Cả nhà mèo tranh điều khiển tivi; Út Ngáo gây một hiểu lầm vui, kết thúc ấm áp.",
+      "templateId": "cat-family",
+      "style": "Dân dã, đời thường — tự quay bằng điện thoại",
+      "ratio": "9:16",
+      "scenes": 6,
+      "sceneDuration": 8,
+      "resolution": "720p",
+      "referenceImages": [
+        {
+          "path": "./images/gia-dinh-meo.png",
+          "role": "character_group",
+          "description": "Năm hàng: Bố Bự, Mẹ Mướp, Tí Hổ, Chị Na, Út Ngáo."
+        }
+      ]
+    }
+  ]
+}

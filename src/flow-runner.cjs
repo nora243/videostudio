@@ -1,4 +1,4 @@
-const {references,orderedReferences}=require('./references.cjs');
+const {references,allOrderedReferences:orderedReferences}=require('./references.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -31,7 +31,7 @@ class FlowRunner {
     options.reference=null;
     if (!this.state.flowProject?.url) throw new Error('Hãy gắn dự án Flow trước.');
     if (!Array.isArray(sceneIds) || !sceneIds.length || new Set(sceneIds).size !== sceneIds.length) throw new Error('Chọn ít nhất một cảnh, không trùng.');
-    const scenes = sceneIds.map(id => this.state.storyboard?.scenes.find(scene=>scene.id===id));
+    const scenes = sceneIds.map(id => require('./production.cjs').resolveSceneVoices(this.state.storyboard?.scenes.find(scene=>scene.id===id),this.state.project?.production));
     for (const scene of scenes) adapter.compilePrompt(scene);
     const batch = { id:randomUUID(), projectId:this.state.activeProjectId||null,projectSnapshot:structuredClone(this.state.project||{}),storyboardSnapshot:structuredClone(this.state.storyboard),title:this.state.storyboard.title, createdAt:new Date().toISOString(), projectUrl:this.state.flowProject.url, options, spent:0, status:'paused', jobs:scenes.map(scene=>({ id:randomUUID(), sceneId:scene.id, scene:structuredClone(scene), status:'queued', projectUrl:this.state.flowProject.url })) };
     if(context.pipelineId)batch.pipelineId=context.pipelineId;
@@ -48,8 +48,12 @@ class FlowRunner {
   finish() {
     if (this.busy) throw new Error('Hãy tạm dừng và chờ cảnh đang chạy hoàn tất.');
     const batch = this.state.flowBatch; if (!batch) return;
-    if (batch.jobs.some(j=>['submitting','generating','needs_review'].includes(j.status))) throw new Error('Còn tác vụ chưa xác định kết quả. Hãy đối soát trước khi kết thúc.');
-    for (const job of batch.jobs) if (job.status === 'queued' || job.status === 'failed') job.status = 'cancelled';
+    for (const job of batch.jobs) if (!['downloaded','cancelled'].includes(job.status)) {
+      job.previousStatus = job.status;
+      job.status = 'cancelled';
+      job.error = 'Đã kết thúc trong Video Studio; tác vụ trên Flow có thể vẫn tiếp tục. Tín dụng đã dùng/dự trù được giữ nguyên.';
+    }
+    batch.pauseRequested = false; delete batch.error;
     batch.status = 'finished'; this.save();
   }
   async run(recover = false) {
@@ -74,8 +78,21 @@ class FlowRunner {
             if (recover) continue;
             job.status = 'preparing'; delete job.error; this.save();
             report('flow.balance','Đọc số dư tín dụng trước khi chuẩn bị cảnh');
-            let credits = await adapter.balance(page);this.recordBalance?.(credits);
-            this.state.flowBalance = { amount:credits, readAt:new Date().toISOString(), source:'Flow · giao diện trình duyệt' };
+            let credits;
+            try {
+              credits = await adapter.balance(page);
+              this.recordBalance?.(credits);
+              this.state.flowBalance = { amount:credits, readAt:new Date().toISOString(), source:'Flow · giao diện trình duyệt' };
+            } catch (balanceError) {
+              const existing = this.state.flowBalance?.amount;
+              if (typeof existing === 'number' && Number.isFinite(existing)) {
+                credits = existing;
+                log('warning', `Chưa đọc được số dư trực tiếp từ Flow (${balanceError.message}); tạm thời dùng số dư gần nhất: ${credits} tín dụng.`, { stage:'flow.balance', sceneId:job.sceneId, jobId:job.id });
+              } else {
+                throw balanceError;
+              }
+            }
+            job.scene=require('./production.cjs').resolveSceneVoices(job.scene,batch.projectSnapshot?.production||this.state.project?.production);
             let prepared = await adapter.prepare(page,job.scene,batch.options,this.state.flowPrepared?.prompt || '',report);
             const tried=new Set([this.state.activeBrowserProfileId]);
             while(prepared.cost>credits&&this.switchForCredits&&!batch.pauseRequested){
@@ -94,10 +111,8 @@ class FlowRunner {
             await adapter.submit(page,job,()=>this.save());
           }
           report('flow.collect','Chờ và xác định kết quả video trên Flow');
-          // An explicit recovery gets a fresh bounded read window, while retaining
-          // the submission identity and retry count so it cannot create a duplicate.
-          if(recover){job.generationWaitStartedAt=new Date().toISOString();this.save();}
-          await adapter.collect(page,job,()=>this.save(),undefined,report);
+          // Reconciliation only reads existing results; it never retries a paid request.
+          await adapter.collect(page,job,()=>this.save(),recover?15000:undefined,report,{readOnly:recover,shouldStop:()=>batch.pauseRequested});
           const folder=batch.projectId?path.join(this.root,'projects',batch.projectId,'videos',batch.id):path.join(this.root,'batches',batch.id);
           const file = path.join(folder,`scene-${String(job.sceneId).padStart(3,'0')}-${job.id}.mp4`);
           report('flow.download','Tải và kiểm tra file video');await adapter.download(page,job,file,()=>this.save());

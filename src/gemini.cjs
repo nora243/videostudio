@@ -35,17 +35,18 @@ async function responseSnapshot(page) {
   return { count, key, text, complete };
 }
 
-async function prepareGemini(page) {
+async function prepareGemini(page, {allowedDraft=''} = {}) {
   if (!isServiceUrl('gemini', page.url())) throw new Error('Tab hiện tại không phải Gemini. Hãy kết nối Gemini trước.');
   if (await page.getByRole('button', { name: stopPattern }).isVisible()) throw new Error('Gemini đang trả lời một yêu cầu khác. Hãy chờ hoàn tất.');
   const input = await waitForGeminiInput(page);
   if (await page.getByRole('button', { name: stopPattern }).isVisible()) throw new Error('Gemini đang trả lời một yêu cầu khác. Hãy chờ hoàn tất.');
-  if ((await input.innerText()).trim()) throw new Error('Ô nhập Gemini đang có nội dung chưa gửi. Hãy gửi hoặc xóa bản nháp đó trước để tool không ghi đè.');
+  const draft=(await input.innerText()).trim();
+  if (draft && (!allowedDraft || draft!==allowedDraft.trim())) throw new Error('Ô nhập Gemini đang có nội dung chưa gửi. Hãy gửi hoặc xóa bản nháp đó trước để tool không ghi đè.');
   return { input, baseline: await responseSnapshot(page) };
 }
 
-async function sendGemini(page, prompt, beforeSubmit) {
-  const { input, baseline } = await prepareGemini(page);
+async function sendGemini(page, prompt, beforeSubmit, options) {
+  const { input, baseline } = await prepareGemini(page,options);
   await input.fill(prompt);
   const send = page.getByRole('button', { name: /^(Gửi tin nhắn|Gửi|Send message|Send)$/i });
   await send.waitFor({ state: 'visible', timeout: 10000 });
@@ -65,7 +66,7 @@ async function collectGemini(page, job, onProgress = () => {}, timeout = 180000)
     if (page.isClosed() || !isServiceUrl('gemini', page.url())) throw new Error('Tab Gemini đã đóng hoặc chuyển trang. Kết nối lại rồi bấm Lấy lại phản hồi; tool sẽ không gửi lại prompt.');
     const queries = page.locator('user-query');
     const latestQuery = await queries.count() ? await queries.last().textContent() : '';
-    if (!latestQuery?.includes(job.marker) && Date.now() - started > 15000) throw new Error('Không thấy yêu cầu này trong hội thoại hiện tại. Hãy mở đúng hội thoại Gemini rồi bấm Lấy lại phản hồi. Tool không gửi lại prompt.');
+    if (!latestQuery?.includes(job.marker) && Date.now() - started > 15000) throw new Error('Không thấy yêu cầu này trong hội thoại hiện tại. Hãy mở đúng hội thoại Gemini rồi bấm Lấy lại phản hồi. Nếu yêu cầu không xuất hiện hoặc Gemini không trả lời, bấm Gửi lại prompt để gửi lại yêu cầu trước.');
     if (latestQuery?.includes(job.marker)) {
       const snapshot = await responseSnapshot(page);
       const isNew = snapshot.key ? snapshot.key !== job.baseline.key : snapshot.count > job.baseline.count;
@@ -79,7 +80,7 @@ async function collectGemini(page, job, onProgress = () => {}, timeout = 180000)
     }
     await pause(750);
   }
-  throw new Error('Gemini chưa hoàn tất sau 3 phút. Bấm Lấy lại phản hồi để tiếp tục đọc; tool không tự gửi lại prompt.');
+  throw new Error('Gemini chưa hoàn tất sau 3 phút. Bấm Lấy lại phản hồi để tiếp tục đọc. Nếu Gemini không trả lời, bấm Gửi lại prompt; tool không tự gửi lại prompt.');
 }
 
 module.exports = { prepareGemini, sendGemini, collectGemini, responseSnapshot, waitForGeminiInput };

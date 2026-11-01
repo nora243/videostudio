@@ -10,6 +10,13 @@ function fixture(){
  session.detach=async()=>{};
  return {root,session,page:{context:()=>({newCDPSession:async()=>session})},options:()=>options};
 }
+test('stopping a pending transfer releases the wait without replacing the original',async()=>{
+ const f=fixture(),target=path.join(f.root,'scene.mp4');let transfer;
+ try{fs.writeFileSync(target,'original');transfer=await beginDownload(f.page,target);
+ await assert.rejects(transfer.save({url:()=> 'https://example.com/pending'},180000,()=>true),/paused/);
+ assert.equal(fs.readFileSync(target,'utf8'),'original');
+ }finally{await transfer?.close();fs.rmSync(f.root,{recursive:true,force:true});}
+});
 test('saves Chrome GUID file independently of missing Playwright artifact and keeps destination valid',async()=>{
  const f=fixture(),target=path.join(f.root,'scene.mp4');let transfer;
  try{

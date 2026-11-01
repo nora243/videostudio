@@ -1,0 +1,42 @@
+const {_electron}=require('playwright-core');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+(async()=>{
+ const root=path.resolve('.test-runtime','cat-family-'+Date.now());
+ fs.mkdirSync(path.join(root,'workspace'),{recursive:true});
+ fs.writeFileSync(path.join(root,'workspace','workspace.json'),JSON.stringify({activeProjectId:'cats-test',project:{title:'Nhà mèo bất ổn',brief:'Út ăn vụng cá, anh Tí Hổ định đổ lỗi nhưng bị mẹ phát hiện.',style:'Điện ảnh',ratio:'16:9',scenes:5,credits:100,cost:6}}));
+ const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
+ let app;
+ try{
+  app=await _electron.launch({args:['.',`--user-data-dir=${root}`],env});
+  const page=await app.firstWindow(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.waitForFunction(()=>window.workspaceUI?.status()?.activeProjectId==='cats-test');
+  await page.click('#script-nav');await page.click('#script-presets');
+  await page.locator('.preset-item').filter({hasText:'Nhà mèo bất ổn'}).click();
+  await page.waitForFunction(()=>document.querySelector('#preset-full-prompt').value.includes('KHÓA NGOẠI HÌNH THEO ẢNH THAM CHIẾU'));
+  assert.equal(await page.locator('#production-speakers .production-speaker').count(),5);
+  assert.equal(await page.isChecked('#production-lockReference'),true);
+  assert.match(await page.inputValue('#preset-full-prompt'),/Tỷ lệ: 9:16/);
+  await page.click('#preset-apply');
+  let project=await page.evaluate(()=>window.workspaceUI.readProject());
+  assert.equal(project.ratio,'9:16');assert.match(project.style,/Dân dã/);
+  assert.equal(project.production.geminiPrompt,'');
+  assert.equal(project.production.templateId,'cat-family');
+  await page.reload();await page.waitForFunction(()=>window.workspaceUI?.readProject()?.production?.templateId==='cat-family');
+  await page.click('#script-nav');await page.click('#script-presets');
+  await page.waitForFunction(()=>document.querySelector('#preset-full-prompt').value.includes('KHÓA NGOẠI HÌNH THEO ẢNH THAM CHIẾU'));
+  const original=await page.inputValue('#preset-full-prompt');
+  await page.fill('#preset-full-prompt',original+'\nTEST: Kết thúc bằng phản ứng của Út.');
+  await page.click('#preset-apply');
+  project=await page.evaluate(()=>window.workspaceUI.readProject());
+  assert.match(project.production.geminiPrompt,/TEST: Kết thúc/);
+  await page.click('#script-presets');await page.waitForTimeout(100);
+  assert.match(await page.inputValue('#preset-full-prompt'),/TEST: Kết thúc/);
+  await page.locator('.preset-item').filter({hasText:'Review & kiến thức xe'}).click();
+  assert.equal(await page.locator('#production-speakers .production-speaker').count(),2);
+  assert.doesNotMatch(await page.inputValue('#production-character'),/Bố Bự/);
+  await page.click('#preset-close');await page.click('#flow-nav');
+  assert.equal(await page.locator('[data-add-role="character_group"]').count(),1);
+  assert.deepEqual(errors,[]);
+  console.log('Verified cat preset selection, defaults, five voices, reload, custom prompt persistence, clean garage switch and family reference UI.');
+ }finally{await app?.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

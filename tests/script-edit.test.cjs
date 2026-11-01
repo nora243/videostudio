@@ -15,6 +15,15 @@ test('rewrite prompt includes entire current context, selected scenes in timelin
  for(const term of ['[3,6]','Nội dung 1','Không viết lại các cảnh ngoài danh sách','Tăng giá trị tư vấn'])assert.ok(prompt.includes(term),term);
  assert.throws(()=>selectedScenes(board,[]),/chọn/);assert.throws(()=>selectedScenes(board,[2]),/chọn/);
 });
+
+test('rewrite bridges unchanged neighbors in timeline order, including custom prompt projects',()=>{
+ for(const input of [project,{...project,production:{...require('../src/script-presets.js').scriptPresets.catProfile(),geminiPrompt:'Custom instructions'}}]){
+  const prompt=buildRewritePrompt(input,board,[1],'Giữ cảnh trước sau, bổ sung quá trình ngã.');
+  assert.ok(prompt.includes(JSON.stringify([{sceneId:1,position:2,previousId:3,nextId:6}])));
+  for(const term of ['NỐI CẢNH KHI VIẾT LẠI','cảnh nối tiếp phải khớp','cảnh trước không được chọn','cảnh sau không được chọn','Không viết lại các cảnh ngoài danh sách'])assert.ok(prompt.includes(term),term);
+  assert.ok(prompt.includes(JSON.stringify(board)));
+ }
+});
 test('partial regeneration merges only selected scenes and rejects stale or wrong-count results',()=>{
  const job={project,sceneIds:[3,6],baseStoryboard:structuredClone(board)},response={title:'Không thay tiêu đề',summary:'Không thay tóm tắt',scenes:[{...scene(1),description_vi:'Viết lại 3'},{...scene(2),description_vi:'Viết lại 6'}]};
  const result=applyScriptResult(JSON.stringify(response),job,board);assert.equal(result.title,board.title);assert.equal(result.summary,board.summary);assert.deepEqual(result.scenes.map(s=>s.id),[3,1,6]);assert.equal(result.scenes[0].description_vi,'Viết lại 3');assert.deepEqual(result.scenes[1],board.scenes[1]);assert.equal(result.scenes[2].description_vi,'Viết lại 6');

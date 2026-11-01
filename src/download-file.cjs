@@ -15,9 +15,10 @@ async function beginDownload(page,filename){
  try{await session.send('Browser.setDownloadBehavior',{behavior:'allowAndName',downloadPath:directory,eventsEnabled:true});}
  catch(error){await session.detach();throw error;}
  return {
-  async save(download,timeout=180000){
+  async save(download,timeout=180000,shouldStop=()=>false){
    const deadline=Date.now()+timeout;
    while(Date.now()<deadline){
+    if(shouldStop())throw Error('Download paused; partial Chrome files are preserved.');
     const matches=[...started.values()].filter(e=>e.url===download.url());
     if(matches.length>1)throw Error('Có nhiều file tải cùng địa chỉ; dừng để tránh lưu nhầm.');
     const entry=matches[0],state=entry&&progress.get(entry.guid);

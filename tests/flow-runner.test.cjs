@@ -10,6 +10,19 @@ function fixture(t,overrides={}){
  const runner=new FlowRunner({state,root,persist:()=>{},getPage:async()=>({}),getAdapter:()=>adapter});
  return{runner,state,calls,root};
 }
+test('reconciliation uses a short read-only window without resetting submission wait',async t=>{
+ const started='2026-01-01T00:00:00.000Z';
+ const f=fixture(t,{collect:async(_p,j,_save,timeout,_report,options)=>{assert.equal(timeout,15000);assert.equal(options.readOnly,true);assert.equal(j.generationWaitStartedAt,started);throw Error('No matching video');}});
+ f.runner.create([1],{});Object.assign(f.state.flowBatch.jobs[0],{status:'needs_review',submittedAt:started,generationWaitStartedAt:started});
+ await f.runner.run(true);assert.equal(f.runner.busy,false);assert.equal(f.state.flowBatch.jobs[0].status,'needs_review');assert.deepEqual(f.calls,[]);
+});
+test('finishing unresolved jobs preserves downloaded clips and credits and allows a new batch',t=>{
+ const f=fixture(t);f.runner.create([1,2],{});const batch=f.state.flowBatch;
+ Object.assign(batch.jobs[0],{status:'downloaded',file:'existing.mp4'});Object.assign(batch.jobs[1],{status:'needs_review',reserved:6});batch.spent=12;
+ f.runner.finish();assert.equal(batch.status,'finished');assert.equal(batch.jobs[0].file,'existing.mp4');assert.equal(batch.jobs[0].status,'downloaded');assert.equal(batch.jobs[1].status,'cancelled');assert.equal(batch.jobs[1].previousStatus,'needs_review');assert.equal(batch.spent,12);
+ f.runner.create([2],{});assert.notEqual(f.state.flowBatch.id,batch.id);
+});
+test('finish stays blocked while the runner is active',t=>{const f=fixture(t);f.runner.create([1],{});f.runner.busy=true;assert.throws(()=>f.runner.finish());assert.equal(f.state.flowBatch.jobs[0].status,'queued');});
 test('stops before submitting a scene when the live credit balance is insufficient',async t=>{
  let reads=0;const{runner,state,calls}=fixture(t,{balance:async()=>++reads<=2?100:0});runner.create([1,2],{});await runner.run();
  assert.deepEqual(calls,['submit','collect','download']);assert.equal(state.flowBatch.spent,6);assert.equal(state.flowBatch.jobs[1].status,'failed');

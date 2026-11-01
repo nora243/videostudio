@@ -12,7 +12,7 @@ const browserDriver={
  async openLinked(browser,url){
   let page=browser.contexts().flatMap(c=>c.pages()).find(p=>{try{return !p.isClosed()&&projectUrl(p.url())===url;}catch{return false;}});
   if(!page){page=await browser.contexts()[0].newPage();await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});}
-  await page.locator('.ProseMirror[role="textbox"]').waitFor({state:'visible',timeout:30000});
+  await page.locator('.ProseMirror[role="textbox"], .page-layout, .preset-card, flow-character-tile').first().waitFor({state:'visible',timeout:30000});
   if(projectUrl(page.url())!==url)throw Error('Project Flow đã liên kết không truy cập được. Hãy kiểm tra tài khoản đăng nhập; tool giữ nguyên liên kết.');
   await page.bringToFront();return page;
  },

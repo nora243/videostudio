@@ -36,3 +36,19 @@ test('never imports an old answer as the new response', async () => {
   await assert.rejects(collectGemini(page, { marker: 'TEST_REQUEST', baseline: { count: 1, key: 'old-response' } }, () => { progress++; }, 1), /không tự gửi lại/);
   assert.equal(progress, 0);
 });
+
+test('explicit resend can replace only the matching previous prompt left in composer',async()=>{
+ const matching=mockComposer('Original prompt');
+ await sendGemini(matching.page,'Retried prompt',()=>matching.events.push('persisted'),{allowedDraft:'Original prompt'});
+ assert.deepEqual(matching.events,['filled','persisted','clicked']);
+ assert.equal(matching.draft(),'Retried prompt');
+ const other=mockComposer('Unrelated user draft');
+ await assert.rejects(sendGemini(other.page,'Retried prompt',()=>{},{allowedDraft:'Original prompt'}),/bản nháp/);
+ assert.deepEqual(other.events,[]);assert.equal(other.draft(),'Unrelated user draft');
+});
+
+test('explicit resend does not interrupt a Gemini response still generating',async()=>{
+ const mock=mockComposer();mock.page.getByRole=()=>({isVisible:async()=>true});
+ await assert.rejects(sendGemini(mock.page,'Retry',()=>{},{allowedDraft:'Original'}),/đang trả lời/);
+ assert.deepEqual(mock.events,[]);
+});

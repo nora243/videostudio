@@ -5,6 +5,10 @@ const statuses={queued:'Chờ gửi',selected:'Đã chọn',disabled:'Bỏ chọ
 const processing=new Set(['preparing','submitting','generating','generated','downloading']),issues=new Set(['failed','needs_review','download_failed']);
 let latest=null,projectId=null,activeScene=1,mode='plan',lastBatch=null,selectedJob=null,detailKey='',version='',dirty=false,debounce;
 let editing=false,undoScript=null;
+const finishQueue=make('button','secondary','Kết thúc hàng đợi để tạo lại');finishQueue.hidden=true;
+finishQueue.title='Giữ video đã tải; không hủy tác vụ trên Flow hoặc hoàn tín dụng.';
+finishQueue.addEventListener('click',()=>$('flow-finish').click());
+$('flow-one').parentElement.append(finishQueue);
 const cards=()=>[...$('storyboard').querySelectorAll('.scene-card')];
 const checkboxes=()=>[...$('scene-outline').querySelectorAll('[data-flow-scene]')];
 const selectedIds=()=>checkboxes().filter(e=>e.checked).map(e=>Number(e.dataset.flowScene));
@@ -46,7 +50,7 @@ function boardChanged(id){
 }
 function selectScene(id,scroll=true){
  const all=cards();if(all.length&&!all.some(c=>Number(c.dataset.scene)===Number(id)))id=Number(all[0].dataset.scene);
- activeScene=Number(id)||1;for(const card of all)card.classList.toggle('is-active',Number(card.dataset.scene)===activeScene);
+ activeScene=Number(id)||1;window.referencesUI?.selectScene(activeScene);for(const card of all)card.classList.toggle('is-active',Number(card.dataset.scene)===activeScene);
  for(const row of $('scene-outline').children){const chosen=Number(row.dataset.outlineScene)===activeScene;row.classList.toggle('is-active',chosen);row.querySelector('button').setAttribute('aria-current',chosen?'true':'false');if(chosen&&scroll&&!row.hidden)row.scrollIntoView({block:'nearest'});}
  $('selected-scene-title').textContent=all.length?`Cảnh ${String(all.findIndex(c=>Number(c.dataset.scene)===activeScene)+1).padStart(2,'0')}`:'Chưa có cảnh';
  const index=all.findIndex(c=>Number(c.dataset.scene)===activeScene);$('scene-prev').disabled=index<=0;$('scene-next').disabled=index<0||index>=all.length-1;
@@ -69,7 +73,7 @@ function updateSelection(){
  updateEditTools();
  if(latest){const unfinished=latest.flowBatch?.jobs.some(j=>!['downloaded','cancelled'].includes(j.status)),action=primaryAction();$('flow-start').disabled=latest.flowBusy||(action==='start'&&(!latest.storyboard||!chosen.size));$('flow-one').disabled=latest.flowBusy||!latest.storyboard||unfinished;$('flow-start').textContent=action==='recover'?'Đối soát tác vụ':action==='resume'?'Tiếp tục hàng đợi':`Chạy ${chosen.size} cảnh đã chọn`;}
 }
-function updateEditTools(){const all=cards(),index=all.findIndex(c=>Number(c.dataset.scene)===activeScene),blocked=editing||window.workspaceUI.scriptBusy()||latest?.generatingScript||latest?.flowBusy||['waiting','submitting','interrupted','invalid_json'].includes(latest?.geminiJob?.status)&&latest?.geminiJob?.sceneIds;
+function updateEditTools(){const all=cards(),index=all.findIndex(c=>Number(c.dataset.scene)===activeScene),blocked=editing||window.workspaceUI.scriptBusy()||latest?.generatingScript||latest?.flowBusy||['waiting','submitting','interrupted'].includes(latest?.geminiJob?.status)&&latest?.geminiJob?.sceneIds;
  for(const id of ['scene-up','scene-down','scene-regenerate','scene-delete','scene-position'])$(id).disabled=Boolean(blocked)||index<0;
  $('scene-up').disabled||=index<=0;$('scene-down').disabled||=index>=all.length-1;$('scene-undo').disabled=Boolean(blocked)||!undoScript;
 }
@@ -92,6 +96,7 @@ $('overview-projects').addEventListener('click',()=>window.libraryUI.show());
 $('overview-budget').addEventListener('click',()=>$('budget-dialog').showModal());
 function sync(data){
  latest=data;
+ finishQueue.hidden=!data.flowBatch?.jobs.some(j=>issues.has(j.status));finishQueue.disabled=Boolean(data.flowBusy||data.pipelineBusy);
  window.upscaleUI?.sync(data);
  $('overview-project-name').textContent=$('title').value.trim()||data.project?.title||'Dự án chưa đặt tên';
  $('overview-project-description').textContent=$('brief').value.trim()||data.storyboard?.summary||'Bắt đầu với ý tưởng của bạn để Gemini chuẩn bị kịch bản.';
@@ -155,6 +160,7 @@ function renderDetail(row){
  if(job?.file||job?.media){const file=make('button','secondary','Mở vị trí file');file.addEventListener('click',async()=>{const result=await window.studio.flowFile({jobId:job.id,batchId:job.batchId||latest.flowBatch.id});if(!result.ok)window.workspaceUI.notify(result.error);});actions.append(file);}
  if(job?.assetId){const high=Boolean(job.media&&Math.min(job.media.metadata.width,job.media.metadata.height)>=1080),upscale=make('button','secondary',high?'✓ Đã có 1080p':'Tải bản 1080p');upscale.disabled=high||latest.flowBusy;upscale.addEventListener('click',()=>window.upscaleUI.start({projectId:latest.activeProjectId,sceneId:job.sceneId,batchId:job.batchId||latest.flowBatch.id,jobId:job.id}));actions.append(upscale);if(job.upscale?.error)body.append(make('p','job-error','1080p: '+job.upscale.error));}
  const currentJob=job&&(!job.batchId||job.batchId===latest.flowBatch?.id);
+ if(currentJob&&!latest.flowBusy&&issues.has(job.status)){const finish=make('button','secondary','Kết thúc hàng đợi');finish.title='Giữ các video đã tải và tín dụng đã dùng/dự trù; tác vụ trên Flow có thể vẫn tiếp tục.';finish.addEventListener('click',()=>$('flow-finish').click());actions.append(finish);}
  if(currentJob&&!latest.flowBusy&&['needs_review','download_failed','generating','generated','downloading','submitting'].includes(job.status)){const recover=make('button','secondary','Đối soát / tải lại');recover.addEventListener('click',()=>$('flow-recover').click());actions.append(recover);}
  if(currentJob&&!latest.flowBusy&&issues.has(job.status)){const skip=make('button','secondary','Đã kiểm tra · bỏ qua');skip.title='Không hủy tác vụ trên Flow';skip.addEventListener('click',async()=>{const result=await window.studio.flowSkip(job.id);if(result.ok)sync(result.data);else window.workspaceUI.notify(result.error);});actions.append(skip);}body.append(actions,make('h4','','PROMPT VIDEO'),make('pre','',row.prompt||'Chưa có prompt.'));
 }

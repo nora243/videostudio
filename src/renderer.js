@@ -11,6 +11,7 @@ function storeDraft() {
   }catch{}
 }
 function notify(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 6500); }
+function rawFeedback(message,error=false){const node=$('raw-import-feedback');node.textContent=message;node.hidden=!message;node.dataset.error=String(error);node.setAttribute('role',error?'alert':'status');}
 async function call(promise) { const result = await promise; if (!result.ok) throw new Error(result.error); return result.data; }
 function renderStatus(data) {
   lastStatus=data;
@@ -30,9 +31,11 @@ function renderStatus(data) {
     if (confirmed) $(service + '-note').textContent = `Xác nhận lần cuối: ${new Date(data.confirmations[service]).toLocaleString('vi-VN')}. Phiên có thể hết hạn.`;
   }
 }
-function readProject() { return { title: $('title').value.trim(), brief: $('brief').value.trim(), style: $('style').value, ratio: $('ratio').value, scenes: Number($('scenes').value), credits: Number($('credits').value), cost: Number($('cost').value), production:window.productionUI.read() }; }
+function readProject() { return { title: $('title').value.trim(), brief: $('brief').value.trim(), style: $('style').value, ratio: $('ratio').value, scenes: $('scenes').value==='auto'?'auto':Number($('scenes').value), sceneDuration: $('sceneDuration').value==='auto'?'auto':Number($('sceneDuration').value), credits: Number($('credits').value), cost: Number($('cost').value), production:window.productionUI.read() }; }
 function estimate() {
-  const p = readProject(), total = p.scenes * p.cost;
+  const p = readProject();
+  if(p.scenes==='auto'){$('estimate').textContent='Auto';$('meter-fill').style.width='0%';$('budget-note').textContent='Ước tính sau khi Gemini chọn số cảnh.';return;}
+  const total = p.scenes * p.cost;
   $('estimate').textContent = total.toLocaleString('vi-VN');
   $('meter-fill').style.width = `${Math.min(100, p.credits ? total / p.credits * 100 : 100)}%`;
   $('meter-fill').style.background = total > p.credits ? '#f0a18c' : '#b6a2fb';
@@ -81,18 +84,25 @@ $('copy').addEventListener('click', async () => { try { await navigator.clipboar
 function renderScriptStatus(data) {
   const job = data.geminiJob;
   const busy = localGenerating || data.generatingScript || data.pipelineBusy;
-  const awaitingRewrite=Boolean(job?.sceneIds&&['submitting','waiting','interrupted','invalid_json'].includes(job.status));
+  const awaitingRewrite=Boolean(job?.sceneIds&&['submitting','waiting','interrupted'].includes(job.status));
   const labels = { preparing: 'Chuẩn bị gửi', submitting: 'Đang gửi', waiting: 'Gemini đang viết…', completed: 'Đã nhận kịch bản', invalid_json: 'Cần kiểm tra JSON', interrupted: 'Cần lấy lại phản hồi', failed: 'Chưa gửi được' };
   $('script-status').textContent = job ? labels[job.status] || job.status : 'Chưa có kịch bản';
   $('script-progress').textContent = job?.error || (data.pipelineBusy ? 'Quy trình Sản xuất video đang chạy. Theo dõi các bước ở bảng tiến trình phía trên.' : (localGenerating||data.generatingScript) ? 'Đang chờ Gemini. Có thể xem tiến trình trong tab trình duyệt; tool không tự gửi lại yêu cầu.' : 'Kết quả được lưu trên máy. Bạn có thể chỉnh từng cảnh trước khi tạo video.');
   $('generate-script').disabled = busy || ['submitting', 'waiting', 'interrupted'].includes(job?.status);
+  $('generate-new-script').disabled = $('generate-script').disabled || data.flowBusy;
+  $('generate-new-script').textContent = (localGenerating||data.generatingScript) ? 'Đang tạo kịch bản…' : 'Tạo mới kịch bản';
   $('generate-script').textContent = (localGenerating||data.generatingScript) ? 'Đang tạo kịch bản…' : data.storyboard?.scenes.length ? `Viết lại ${window.studioUI?.selectedIds().length||0} cảnh đã chọn` : 'Gửi Gemini & tạo kịch bản';
   $('recover-script').disabled = busy || !job?.baseline || job?.status==='completed';
+  $('retry-script').hidden = !job?.prompt || !['interrupted','failed','waiting','submitting','invalid_json'].includes(job.status);
+  $('retry-script').disabled = busy;
   $('save-storyboard').disabled = busy || !data.storyboard;
   $('export-storyboard').disabled = !data.storyboard;
   $('import-script').disabled = busy;
   if (job?.raw && job.raw !== renderedRaw && document.activeElement !== $('raw-response')) { $('raw-response').value = job.raw; renderedRaw = job.raw; }
-  if (job?.status === 'invalid_json') $('raw-details').open = true;
+  if (job?.status === 'invalid_json') {
+    $('raw-details').open = true;
+    if($('raw-import-feedback').dataset.jobId!==job.id){$('raw-import-feedback').dataset.jobId=job.id;rawFeedback(job.error||'Không áp dụng được phản hồi Gemini. Kiểm tra JSON bên dưới.',true);}
+  }
   if (data.storyboard && data.storyboard.updatedAt !== renderedScriptVersion) {
     currentStoryboard = data.storyboard; renderedScriptVersion = data.storyboard.updatedAt;
     renderStoryboard(data.storyboard);
@@ -111,7 +121,7 @@ function field(parent, labelText, value, name, type = 'textarea') {
   if(name==='video_prompt_en'||name==='negative_prompt_en')label.dataset.editorTab='prompt';
 }
 function renderStoryboard(script) {
-  $('scenes').value=Math.max(1,script.scenes.length);
+  
   try{const draft=JSON.parse(localStorage.getItem(`storyboard-draft:${activeProjectId}`)||'null');if(draft?.version===script.updatedAt&&Array.isArray(draft.data?.scenes))script={...script,...draft.data};}catch{}
   const container = $('storyboard'); container.replaceChildren();
   $('script-caption').textContent = `${script.title} · ${script.scenes.length} cảnh · cập nhật ${new Date(script.updatedAt).toLocaleString('vi-VN')}`;
@@ -144,21 +154,25 @@ function readStoryboard() {
     return scene;
   }) };
 }
-async function runScript(recover = false, explicitIds = null) {
+async function runScript(recover = false, explicitIds = null, retry = false, createNew = false) {
   if(localGenerating)return;
   window.libraryUI?.workspace('script-nav');
-  if (!recover && !$('project').reportValidity()) return;
-  const sceneIds=!recover&&currentStoryboard?.scenes.length?(explicitIds||window.studioUI.selectedIds()):null;
+  if (!recover && !retry && !$('project').reportValidity()) return;
+  const sceneIds=createNew?null:retry?lastStatus?.geminiJob?.sceneIds:!recover&&currentStoryboard?.scenes.length?(explicitIds||window.studioUI.selectedIds()):null;
   if(sceneIds&&!sceneIds.length)return notify('Hãy tick các cảnh cần viết lại hoặc dùng nút Tạo lại cảnh này.');
-  localGenerating = true; $('generate-script').disabled = true; $('recover-script').disabled = true;
+  localGenerating = true; $('generate-script').disabled = true; $('recover-script').disabled = true; $('retry-script').disabled = true;
   if(lastStatus)renderScriptStatus(lastStatus);window.studioUI.refreshControls();
-  $('script-progress').textContent = recover ? 'Đang lấy lại phản hồi; không gửi prompt mới…' : 'Đang gửi ý tưởng tới Gemini…';
+  $('script-progress').textContent = retry ? 'Đang gửi lại prompt của yêu cầu trước tới Gemini…' : recover ? 'Đang lấy lại phản hồi; không gửi prompt mới…' : 'Đang gửi ý tưởng tới Gemini…';
   try {
-    if(!recover){await call(window.studio.save(readProject()));if(sceneIds)renderStatus(await call(window.studio.saveStoryboard(readStoryboard())));}
-    const data = await call(recover ? window.studio.recoverScript() : window.studio.generateScript({...readProject(),...(sceneIds?{sceneIds,rewriteNote:$('script-rewrite-note').value}:{})}));
+    const project=readProject();
+    if(createNew&&project.production)project.production={...project.production,geminiPrompt:''};
+    if(!recover&&!retry){await call(window.studio.save(project));if(sceneIds)renderStatus(await call(window.studio.saveStoryboard(readStoryboard())));}
+    const data = await call(retry ? window.studio.retryScript() : recover ? window.studio.recoverScript() : window.studio.generateScript({...project,...(sceneIds?{sceneIds,rewriteNote:$('script-rewrite-note').value}:{})}));
     localGenerating = false;
+    if(createNew&&!data.scriptWarning)window.productionUI.apply(data.project?.production);
     renderStatus({ ...data, generatingScript: false });
-    notify(data.scriptWarning || (sceneIds?`Đã viết lại ${sceneIds.length} cảnh được chọn; các cảnh khác được giữ nguyên.`:`Đã dựng ${data.storyboard.scenes.length} cảnh từ Gemini.`));
+    if(!data.scriptWarning){storeDraft();if(sceneIds?.length)window.studioUI?.selectScene(sceneIds[0]);}
+    notify(data.scriptWarning || data.scriptNotice || (sceneIds?`Đã viết lại ${sceneIds.length} cảnh được chọn; các cảnh khác được giữ nguyên.`:`Đã dựng ${data.storyboard.scenes.length} cảnh từ Gemini.`));
   } catch (error) { notify(error.message); }
   finally {
     localGenerating = false;
@@ -166,9 +180,24 @@ async function runScript(recover = false, explicitIds = null) {
   }
 }
 $('generate-script').addEventListener('click', () => runScript());
+$('generate-new-script').addEventListener('click', () => runScript(false,null,false,true));
 $('recover-script').addEventListener('click', () => runScript(true));
+$('retry-script').addEventListener('click', () => runScript(false,null,true));
 $('save-storyboard').addEventListener('click', async () => { try { renderStatus(await call(window.studio.saveStoryboard(readStoryboard()))); notify('Đã lưu chỉnh sửa kịch bản.'); } catch (error) { notify(error.message); } });
-$('import-script').addEventListener('click', async () => { try { renderStatus(await call(window.studio.importScript($('raw-response').value))); $('raw-dialog').close(); notify('Đã dựng cảnh từ JSON.'); } catch (error) { notify(error.message); } });
+async function importScriptResponse(){
+  if($('import-script').disabled)return;
+  $('import-script').disabled=true;rawFeedback('Đang kiểm tra và áp dụng JSON…');
+  try{
+    const data=await call(window.studio.importScript($('raw-response').value));
+    renderStatus(data);storeDraft();
+    const sceneId=data.geminiJob?.sceneIds?.[0];
+    if(sceneId){window.studioUI?.selectScene(sceneId);window.studioUI?.showTab('visual');}
+    const message=data.scriptNotice||'Đã áp dụng JSON vào kịch bản.';
+    rawFeedback(message);$('raw-dialog').close();notify(message);
+  }catch(error){rawFeedback(error.message,true);notify(error.message);}
+  finally{$('import-script').disabled=Boolean(localGenerating||lastStatus?.generatingScript||lastStatus?.pipelineBusy);}
+}
+$('import-script').addEventListener('click',importScriptResponse);
 $('export-storyboard').addEventListener('click', () => {
   const blob = new Blob([JSON.stringify(readStoryboard(), null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), anchor = document.createElement('a');
@@ -203,7 +232,7 @@ async function flowAction(action){
 }
 $('flow-bind').addEventListener('click',()=>flowAction(async()=>{await call(window.studio.save(readProject()));return call(window.studio.flowBind());}));
 $('flow-reference').addEventListener('click',()=>flowAction(()=>call(window.studio.flowReference())));
-$('flow-clear-reference').addEventListener('click',()=>flowAction(()=>call(window.studio.flowClearReference())));
+$('flow-clear-reference').addEventListener('click',()=>flowAction(()=>call(window.studio.flowClearReference({scope:'common'}))));
 async function flowSelection(start=false,one=false){
   if(!currentStoryboard)return notify('Hãy tạo kịch bản trước.');
   const sceneId=Number($('flow-scene').value),sceneIds=one?[sceneId]:[...document.querySelectorAll('[data-flow-scene]:checked')].map(e=>Number(e.dataset.flowScene)),options=flowOptions();
@@ -223,6 +252,7 @@ function applyWorkspace(data){
   activeProjectId=data.activeProjectId;renderedScriptVersion='';renderedRaw='';currentStoryboard=null;flowQueueVersion='';
   $('storyboard').replaceChildren();$('script-story-info').replaceChildren();$('flow-scene').replaceChildren();$('script-caption').textContent='';$('raw-response').value='';$('prompt-area').hidden=true;
   $('flow-prepared-info').textContent='Chuẩn bị để kiểm tra cấu hình và chi phí trước khi tạo video.';
+  $('sceneDuration').value=data.project?.sceneDuration??8;
   for(const[key,value]of Object.entries(data.project||{}))if($(key))$(key).value=value;
   try{const draft=JSON.parse(localStorage.getItem(`project-draft:${activeProjectId}`)||'null');if(draft)for(const[key,value]of Object.entries(draft))if($(key))$(key).value=value;}catch{}
   let production=data.project?.production;try{const draft=JSON.parse(localStorage.getItem(`project-draft:${activeProjectId}`)||'null');if(draft&&Object.hasOwn(draft,'production'))production=draft.production;}catch{}
@@ -234,7 +264,7 @@ function renameProjectDraft(id,name){
   try{const key=`project-draft:${id}`,draft=JSON.parse(localStorage.getItem(key)||'null');if(draft){draft.title=name;localStorage.setItem(key,JSON.stringify(draft));}}catch{}
   if(activeProjectId===id){$('title').value=name;storeDraft();}
 }
-window.workspaceUI={readProject,apply:applyWorkspace,storeDraft,notify,rename:renameProjectDraft,readStoryboard,updateStatus:renderStatus,status:()=>lastStatus,scriptBusy:()=>localGenerating,regenerate:ids=>runScript(false,ids),saveEdited:async(script)=>{const data=await call(window.studio.saveStoryboard(script));$('scenes').value=Math.max(1,data.storyboard.scenes.length);renderStatus(data);storeDraft();return data;}};
+window.workspaceUI={readProject,apply:applyWorkspace,storeDraft,notify,rename:renameProjectDraft,readStoryboard,updateStatus:renderStatus,status:()=>lastStatus,scriptBusy:()=>localGenerating,regenerate:ids=>runScript(false,ids),saveEdited:async(script)=>{const data=await call(window.studio.saveStoryboard(script));renderStatus(data);storeDraft();return data;}};
 $('project-new').addEventListener('click',async()=>{storeDraft();try{applyWorkspace(await call(window.studio.projectNew()));window.libraryUI?.workspace('overview-nav');notify('Đã tạo dự án mới.');}catch(error){notify(error.message);}});
 
 document.addEventListener('input', storeDraft);
